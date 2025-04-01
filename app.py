@@ -4,6 +4,209 @@ import matplotlib.pyplot as plt
 import numpy as np
 import io
 import base64
+from datetime import datetime
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib.utils import ImageReader
+
+# Function to generate faculty report
+def generate_faculty_report(faculty_data):
+    """Generate a text report with rating categories and values"""
+    faculty_name = faculty_data["Faculty Name"].iloc[0]
+    report = f"Faculty Rating Report for: {faculty_name}\n"
+    report += f"Generated on: {datetime.now().strftime('%Y-%m-%d')}\n"
+    report += "=" * 50 + "\n\n"
+    
+    # Add overall average
+    overall_avg = faculty_data["Rating"].mean()
+    report += f"OVERALL AVERAGE: {overall_avg:.2f} / 5.0\n\n"
+    report += "RATINGS BY CATEGORY:\n"
+    report += "-" * 50 + "\n\n"
+    
+    # Sort ratings from highest to lowest
+    sorted_data = faculty_data.sort_values(by="Rating", ascending=False)
+    
+    # Add each category and its rating
+    for _, row in sorted_data.iterrows():
+        category = row["Rating Category"].title()
+        rating = row["Rating"]
+        report += f"{category}: {rating:.2f}\n"
+    
+    return report
+
+def generate_pdf_report(faculty_data):
+    """Generate a PDF report with ratings in table format"""
+    faculty_name = faculty_data["Faculty Name"].iloc[0]
+    
+    # Create buffer for PDF with reduced margins
+    pdf_buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        pdf_buffer,
+        pagesize=letter,
+        rightMargin=36,  # 0.5 inch
+        leftMargin=36,   # 0.5 inch
+        topMargin=36,    # 0.5 inch
+        bottomMargin=36  # 0.5 inch
+    )
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    try:
+        # Add logo (adjust path as needed)
+        logo = Image("REVA logo.jpg", width=180, height=50)
+        logo.hAlign = 'RIGHT'  # Right align the logo
+        elements.append(logo)
+        elements.append(Spacer(1, 10))  # Add small space after logo
+    except:
+        # If logo file not found, continue without it
+        pass
+    
+    # Create custom styles
+    header_style = ParagraphStyle(
+        'CustomHeader',
+        parent=styles['Heading1'],
+        fontSize=14,
+        alignment=1,  # Center alignment
+        spaceAfter=10
+    )
+    
+    faculty_style = ParagraphStyle(
+        'FacultyName',
+        parent=styles['Normal'],
+        fontSize=12,
+        alignment=0,  # Left alignment
+        spaceBefore=10,
+        spaceAfter=20
+    )
+    
+    # Add headers
+    elements.append(Paragraph("School of Computing and Information Technology", header_style))
+    elements.append(Paragraph("Academic year 2024-2025", header_style))
+    elements.append(Paragraph(f"Name of the Faculty: {faculty_name}", faculty_style))
+    elements.append(Spacer(1, 20))
+    
+    # Calculate overall average
+    overall_avg = faculty_data["Rating"].mean().round(2)
+    elements.append(Paragraph(f"Overall Average: {overall_avg:.2f} / 5.0", styles['Heading3']))
+    elements.append(Spacer(1, 20))
+    
+    # Prepare table data
+    sorted_data = faculty_data.sort_values(by="Rating", ascending=False)
+    table_data = [["Rating Category", "Score"]]  # Header row
+    
+    for _, row in sorted_data.iterrows():
+        # Split long category names into multiple lines if longer than 40 chars
+        category = row["Rating Category"].title()
+        if len(category) > 70:
+            # Split at space nearest to middle
+            mid = category[:70].rfind(' ')
+            if mid == -1:  # No space found, force split
+                mid = 70
+            category = category[:mid] + '\n' + category[mid:].strip()
+            
+        table_data.append([
+            category,
+            f"{row['Rating']:.2f}"
+        ])
+    
+    # Create table with increased width and automatic word wrapping
+    table = Table(table_data, colWidths=[5*inch, 1*inch])
+    
+    # Style the table with word wrap and vertical alignment
+    style = TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 12),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -1), 10),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('BOX', (0, 0), (-1, -1), 2, colors.black),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),  # Vertical middle alignment
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('WORDWRAP', (0, 0), (-1, -1), True),  # Enable word wrapping
+    ])
+    
+    table.setStyle(style)
+    elements.append(table)
+    elements.append(Spacer(1, 30))
+    
+    # Add footer signatures
+    footer_data = [["Academic Vertical Head", "Faculty", "Director/HOD"]]
+    footer_table = Table(footer_data, colWidths=[2.0*inch, 2.0*inch, 2.0*inch])
+    footer_style = TableStyle([
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('TOPPADDING', (0, 0), (-1, -1), 30),  # Space for signature
+    ])
+    
+    footer_table.setStyle(footer_style)
+    elements.append(footer_table)
+    
+    # Build PDF
+    doc.build(elements)
+    pdf_buffer.seek(0)
+    return pdf_buffer
+
+# Function to generate table visualization for faculty
+def generate_table_visualization(faculty_data):
+    """Generate a table visualization of faculty ratings as a figure"""
+    if faculty_data.empty:
+        return None
+    
+    faculty_name = faculty_data["Faculty Name"].iloc[0]
+    
+    # Calculate total average
+    total_avg = faculty_data['Rating'].mean().round(4)
+    
+    # Create new row for total average
+    new_row = pd.DataFrame({
+        'Faculty Name': [faculty_name],
+        'Rating Category': ['Total Average'],
+        'Rating': [total_avg]
+    })
+    
+    # Append new row to faculty data
+    viz_data = pd.concat([faculty_data, new_row], ignore_index=True)
+    
+    # Prepare data for table
+    headers = ['Rating Category', 'Average Rating']
+    data = viz_data[['Rating Category', 'Rating']].values.tolist()
+    
+    # Create figure and axis
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.axis('off')  # Hide axes
+    
+    # Add title
+    plt.title(f"Ratings for {faculty_name}", fontsize=14, pad=20)
+    
+    # Create table
+    table = ax.table(
+        cellText=data,
+        colLabels=headers,
+        loc='center',
+        cellLoc='left',
+        colWidths=[0.7, 0.3]
+    )
+    
+    # Set font size and padding
+    table.auto_set_font_size(False)
+    table.set_fontsize(12)
+    table.scale(1, 1.5)
+    
+    plt.tight_layout()
+    return fig
 
 # Set page config
 st.set_page_config(page_title="Faculty Ratings Dashboard", layout="wide")
@@ -283,34 +486,91 @@ with tab1:
                         # Filter Data for Selected Faculty
                         faculty_data = st.session_state.avg_ratings[st.session_state.avg_ratings["Faculty Name"] == selected_faculty]
                         
-                        # Plot Ratings
-                        fig, ax = plt.subplots(figsize=(12, 8))  # Increased height from 6 to 8
-                        bars = ax.bar(faculty_data["Rating Category"], faculty_data["Rating"], color="skyblue", width=0.6)  # Added width parameter
-
-                        ax.set_title(f"📈 Average Ratings for {selected_faculty}", fontsize=14)
-                        ax.set_xlabel("Rating Category", fontsize=12)
-                        ax.set_ylabel("Average Rating (1-5)", fontsize=12)
-                        ax.set_ylim(0, 5.5)  # Keep the same y-limit
-                        plt.xticks(rotation=45, ha="right", fontsize=10)
-                        
-                        # Add labels on bars
-                        for bar, category, rating in zip(bars, faculty_data["Rating Category"], faculty_data["Rating"]):
-                            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(), f"{rating:.2f}", ha="center", va="bottom", fontsize=10)
-                        
-                        plt.tight_layout()
-                        st.pyplot(fig)
-                        
-                        # Save figure option
-                        save_fig_buffer = io.BytesIO()
-                        fig.savefig(save_fig_buffer, format='png', dpi=300, bbox_inches='tight')
-                        save_fig_buffer.seek(0)
-                        
-                        st.download_button(
-                            label="Download Chart",
-                            data=save_fig_buffer,
-                            file_name=f"{selected_faculty}_ratings.png",
-                            mime="image/png"
+                        # Select visualization type
+                        viz_type = st.radio(
+                            "Choose Visualization Type:",
+                            ["Bar Chart", "Table"],
+                            horizontal=True
                         )
+                        
+                        if viz_type == "Bar Chart":
+                            # Plot Ratings
+                            fig, ax = plt.subplots(figsize=(12, 8))  # Increased height from 6 to 8
+                            bars = ax.bar(faculty_data["Rating Category"], faculty_data["Rating"], color="skyblue", width=0.6)  # Added width parameter
+
+                            ax.set_title(f"📈 Average Ratings for {selected_faculty}", fontsize=14)
+                            ax.set_xlabel("Rating Category", fontsize=12)
+                            ax.set_ylabel("Average Rating (1-5)", fontsize=12)
+                            ax.set_ylim(0, 5.5)  # Keep the same y-limit
+                            plt.xticks(rotation=45, ha="right", fontsize=10)
+                            
+                            # Add labels on bars
+                            for bar, category, rating in zip(bars, faculty_data["Rating Category"], faculty_data["Rating"]):
+                                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(), f"{rating:.2f}", ha="center", va="bottom", fontsize=10)
+                            
+                            plt.tight_layout()
+                            st.pyplot(fig)
+                            
+                            # Save figure option
+                            save_fig_buffer = io.BytesIO()
+                            fig.savefig(save_fig_buffer, format='png', dpi=300, bbox_inches='tight')
+                            save_fig_buffer.seek(0)
+                            
+                            st.download_button(
+                                label="Download Chart",
+                                data=save_fig_buffer,
+                                file_name=f"{selected_faculty}_ratings_chart.png",
+                                mime="image/png"
+                            )
+                        else:  # Table visualization
+                            # Generate table visualization
+                            table_fig = generate_table_visualization(faculty_data)
+                            if table_fig:
+                                st.pyplot(table_fig)
+                                
+                                # Save table figure option
+                                table_buffer = io.BytesIO()
+                                table_fig.savefig(table_buffer, format='png', dpi=300, bbox_inches='tight')
+                                table_buffer.seek(0)
+                                
+                                st.download_button(
+                                    label="Download Table Image",
+                                    data=table_buffer,
+                                    file_name=f"{selected_faculty}_ratings_table.png",
+                                    mime="image/png"
+                                )
+                        
+                        # Add horizontal line for visual separation
+                        st.markdown("---")
+                        
+                        # Generate text report for rating categories
+                        faculty_report = generate_faculty_report(faculty_data)
+
+                        # Create columns for layout
+                        report_col1, report_col2 = st.columns([1, 2])
+
+                        with report_col1:
+                            # Add text report download button
+                            st.download_button(
+                                label="Download Text Report",
+                                data=faculty_report,
+                                file_name=f"{selected_faculty}_ratings_report.txt",
+                                mime="text/plain"
+                            )
+                            
+                            # Add PDF report download button
+                            pdf_buffer = generate_pdf_report(faculty_data)
+                            st.download_button(
+                                label="Download PDF Report",
+                                data=pdf_buffer,
+                                file_name=f"{selected_faculty}_ratings_report.pdf",
+                                mime="application/pdf"
+                            )
+
+                        with report_col2:
+                            # Preview the report
+                            st.text("Report Preview:")
+                            st.text_area("", faculty_report, height=250)
                 
             except Exception as e:
                 st.error(f"⚠️ Error processing the file: {e}")
@@ -405,34 +665,91 @@ with tab1:
                 # Filter Data for Selected Faculty
                 faculty_data = avg_ratings[avg_ratings["Faculty Name"] == selected_faculty]
                 
-                # Plot Ratings
-                fig, ax = plt.subplots(figsize=(12, 8))  # Increased height from 6 to 8
-                bars = ax.bar(faculty_data["Rating Category"], faculty_data["Rating"], color="skyblue", width=0.6)  # Added width parameter
-
-                ax.set_title(f"📈 Average Ratings for {selected_faculty}", fontsize=14)
-                ax.set_xlabel("Rating Category", fontsize=12)
-                ax.set_ylabel("Average Rating (1-5)", fontsize=12)
-                ax.set_ylim(0, 5.5)  # Keep the same y-limit
-                plt.xticks(rotation=45, ha="right", fontsize=10)
-                
-                # Add labels on bars
-                for bar, category, rating in zip(bars, faculty_data["Rating Category"], faculty_data["Rating"]):
-                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(), f"{rating:.2f}", ha="center", va="bottom", fontsize=10)
-                
-                plt.tight_layout()
-                st.pyplot(fig)
-                
-                # Save figure option
-                save_fig_buffer = io.BytesIO()
-                fig.savefig(save_fig_buffer, format='png', dpi=300, bbox_inches='tight')
-                save_fig_buffer.seek(0)
-                
-                st.download_button(
-                    label="Download Chart",
-                    data=save_fig_buffer,
-                    file_name=f"{selected_faculty}_ratings.png",
-                    mime="image/png"
+                # Select visualization type
+                viz_type = st.radio(
+                    "Choose Visualization Type:",
+                    ["Bar Chart", "Table"],
+                    horizontal=True
                 )
+                
+                if viz_type == "Bar Chart":
+                    # Plot Ratings
+                    fig, ax = plt.subplots(figsize=(12, 8))  # Increased height from 6 to 8
+                    bars = ax.bar(faculty_data["Rating Category"], faculty_data["Rating"], color="skyblue", width=0.6)  # Added width parameter
+
+                    ax.set_title(f"📈 Average Ratings for {selected_faculty}", fontsize=14)
+                    ax.set_xlabel("Rating Category", fontsize=12)
+                    ax.set_ylabel("Average Rating (1-5)", fontsize=12)
+                    ax.set_ylim(0, 5.5)  # Keep the same y-limit
+                    plt.xticks(rotation=45, ha="right", fontsize=10)
+                    
+                    # Add labels on bars
+                    for bar, category, rating in zip(bars, faculty_data["Rating Category"], faculty_data["Rating"]):
+                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(), f"{rating:.2f}", ha="center", va="bottom", fontsize=10)
+                    
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                    
+                    # Save figure option
+                    save_fig_buffer = io.BytesIO()
+                    fig.savefig(save_fig_buffer, format='png', dpi=300, bbox_inches='tight')
+                    save_fig_buffer.seek(0)
+                    
+                    st.download_button(
+                        label="Download Chart",
+                        data=save_fig_buffer,
+                        file_name=f"{selected_faculty}_ratings_chart.png",
+                        mime="image/png"
+                    )
+                else:  # Table visualization
+                    # Generate table visualization
+                    table_fig = generate_table_visualization(faculty_data)
+                    if table_fig:
+                        st.pyplot(table_fig)
+                        
+                        # Save table figure option
+                        table_buffer = io.BytesIO()
+                        table_fig.savefig(table_buffer, format='png', dpi=300, bbox_inches='tight')
+                        table_buffer.seek(0)
+                        
+                        st.download_button(
+                            label="Download Table Image",
+                            data=table_buffer,
+                            file_name=f"{selected_faculty}_ratings_table.png",
+                            mime="image/png"
+                        )
+                
+                # Add horizontal line for visual separation
+                st.markdown("---")
+                
+                # Generate text report for rating categories
+                faculty_report = generate_faculty_report(faculty_data)
+
+                # Create columns for layout
+                report_col1, report_col2 = st.columns([1, 2])
+
+                with report_col1:
+                    # Add text report download button
+                    st.download_button(
+                        label="Download Text Report",
+                        data=faculty_report,
+                        file_name=f"{selected_faculty}_ratings_report.txt",
+                        mime="text/plain"
+                    )
+                    
+                    # Add PDF report download button
+                    pdf_buffer = generate_pdf_report(faculty_data)
+                    st.download_button(
+                        label="Download PDF Report",
+                        data=pdf_buffer,
+                        file_name=f"{selected_faculty}_ratings_report.pdf",
+                        mime="application/pdf"
+                    )
+
+                with report_col2:
+                    # Preview the report
+                    st.text("Report Preview:")
+                    st.text_area("", faculty_report, height=250)
                 
             except Exception as e:
                 st.error(f"⚠️ Error processing the file: {e}")
@@ -451,9 +768,10 @@ with tab2:
     ### Features:
     
     - Clean and transform raw feedback data
-    - Generate visualizations of faculty ratings
+    - Generate visualizations of faculty ratings (bar charts or tables)
     - Download processed data as Excel files
     - Download visualizations as PNG images
+    - Create text reports with ratings information
     
     ### How to Use:
     
