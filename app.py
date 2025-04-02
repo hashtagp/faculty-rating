@@ -11,6 +11,18 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib.utils import ImageReader
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+import matplotlib
+matplotlib.use('Agg')
+
+# Function to convert Matplotlib figure to ReportLab Image
+def fig_to_image(fig):
+    """Convert a Matplotlib figure to a ReportLab Image"""
+    canvas = FigureCanvasAgg(fig)
+    buf = io.BytesIO()
+    canvas.print_png(buf)
+    buf.seek(0)
+    return Image(buf, width=7*inch, height=4*inch)
 
 # Function to generate faculty report
 def generate_faculty_report(faculty_data):
@@ -37,7 +49,7 @@ def generate_faculty_report(faculty_data):
     
     return report
 
-def generate_pdf_report(faculty_data):
+def generate_pdf_report(faculty_data, course_name):
     """Generate a PDF report with ratings in table format"""
     faculty_name = faculty_data["Faculty Name"].iloc[0]
     
@@ -56,7 +68,7 @@ def generate_pdf_report(faculty_data):
     
     try:
         # Add logo (adjust path as needed)
-        logo = Image("REVA logo.jpg", width=180, height=50)
+        logo = Image("REVA_logo.png", width=180, height=50)
         logo.hAlign = 'RIGHT'  # Right align the logo
         elements.append(logo)
         elements.append(Spacer(1, 10))  # Add small space after logo
@@ -85,6 +97,7 @@ def generate_pdf_report(faculty_data):
     # Add headers
     elements.append(Paragraph("School of Computing and Information Technology", header_style))
     elements.append(Paragraph("Academic year 2024-2025", header_style))
+    elements.append(Paragraph(f"Course: {course_name}", header_style))
     elements.append(Paragraph(f"Name of the Faculty: {faculty_name}", faculty_style))
     elements.append(Spacer(1, 20))
     
@@ -140,6 +153,32 @@ def generate_pdf_report(faculty_data):
     table.setStyle(style)
     elements.append(table)
     elements.append(Spacer(1, 30))
+
+    # Create and add bar chart with increased height
+    fig, ax = plt.subplots(figsize=(10, 8))  # Increased height from 6 to 8
+    bars = ax.bar(faculty_data["Rating Category"], faculty_data["Rating"], color="skyblue", width=0.4)  # Reduced width for taller appearance
+    ax.set_title(f"Ratings Distribution", fontsize=12)
+    ax.set_xlabel("Rating Category", fontsize=10)
+    ax.set_ylabel("Rating", fontsize=10)
+    ax.set_ylim(0, 5.5)  # Set y-axis limit to make bars appear taller
+    plt.xticks(rotation=45, ha='right')
+    
+    # Add value labels on bars
+    for bar in bars:
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height,
+                f'{height:.2f}',
+                ha='center', va='bottom')
+    
+    plt.tight_layout()
+    
+    # Convert figure to ReportLab Image with increased height
+    chart_img = fig_to_image(fig)
+    chart_img.hAlign = 'CENTER'
+    chart_img._height = 5*inch  # Increase image height in the PDF
+    elements.append(chart_img)
+    elements.append(Spacer(1, 20))
+    plt.close(fig)  # Close the figure to free memory
     
     # Add footer signatures
     footer_data = [["Academic Vertical Head", "Faculty", "Director/HOD"]]
@@ -207,6 +246,44 @@ def generate_table_visualization(faculty_data):
     
     plt.tight_layout()
     return fig
+
+# Function to verify data processing
+def verify_data_processing(faculty_ratings_df, comments_df, course_feedback_df):
+    """Print verification of data processing including course information"""
+    print("\nData Processing Verification:")
+    print("-" * 50)
+    
+    # Verify faculty ratings
+    print("\nFaculty Ratings Summary:")
+    print(f"Total records: {len(faculty_ratings_df)}")
+    print("\nUnique courses:")
+    for course in sorted(faculty_ratings_df['Course'].unique()):
+        course_data = faculty_ratings_df[faculty_ratings_df['Course'] == course]
+        print(f"- {course}: {len(course_data)} ratings")
+    
+    # Verify faculty-course combinations
+    faculty_course = faculty_ratings_df.groupby(['Faculty Name', 'Course']).size().reset_index()
+    print("\nFaculty-Course combinations:")
+    for _, row in faculty_course.iterrows():
+        print(f"- {row['Faculty Name']} - {row['Course']}")
+    
+    # Verify comments
+    if not comments_df.empty:
+        print("\nComments Summary:")
+        print(f"Total comments: {len(comments_df)}")
+        print("\nComments per course:")
+        for course in sorted(comments_df['Course'].unique()):
+            course_comments = comments_df[comments_df['Course'] == course]
+            print(f"- {course}: {len(course_comments)} comments")
+    
+    # Verify course feedback
+    if not course_feedback_df.empty:
+        print("\nCourse Feedback Summary:")
+        print(f"Total feedback entries: {len(course_feedback_df)}")
+        print("\nFeedback per course:")
+        for course in sorted(course_feedback_df['Course'].unique()):
+            course_fb = course_feedback_df[course_feedback_df['Course'] == course]
+            print(f"- {course}: {len(course_fb)} feedback entries")
 
 # Set page config
 st.set_page_config(page_title="Faculty Ratings Dashboard", layout="wide")
@@ -407,6 +484,9 @@ with tab1:
                         
                         # Save averages to session state
                         st.session_state.avg_ratings = avg_ratings
+                        
+                        # Verify data processing
+                        verify_data_processing(faculty_ratings_df, comments_df, course_feedback_df)
                 
                 # Display processed data if available in session state
                 if st.session_state.faculty_ratings_df is not None:
@@ -484,7 +564,15 @@ with tab1:
                         selected_faculty = st.selectbox("🎓 Select a Faculty", faculties)
                         
                         # Filter Data for Selected Faculty
-                        faculty_data = st.session_state.avg_ratings[st.session_state.avg_ratings["Faculty Name"] == selected_faculty]
+                        faculty_data = st.session_state.faculty_ratings_df[
+                            st.session_state.faculty_ratings_df["Faculty Name"] == selected_faculty
+                        ].copy()
+                        
+                        # Get unique course name for this faculty
+                        course_name = faculty_data["Course"].iloc[0].replace("Feedback on ", "") if len(faculty_data) > 0 else "N/A"
+                        
+                        # Update averages computation
+                        avg_ratings = faculty_data.groupby(["Faculty Name", "Rating Category"], as_index=False).agg({"Rating": "mean"})
                         
                         # Select visualization type
                         viz_type = st.radio(
@@ -494,9 +582,9 @@ with tab1:
                         )
                         
                         if viz_type == "Bar Chart":
-                            # Plot Ratings
+                            # Plot Ratings using avg_ratings
                             fig, ax = plt.subplots(figsize=(12, 8))  # Increased height from 6 to 8
-                            bars = ax.bar(faculty_data["Rating Category"], faculty_data["Rating"], color="skyblue", width=0.6)  # Added width parameter
+                            bars = ax.bar(avg_ratings["Rating Category"], avg_ratings["Rating"], color="skyblue", width=0.6)  # Added width parameter
 
                             ax.set_title(f"📈 Average Ratings for {selected_faculty}", fontsize=14)
                             ax.set_xlabel("Rating Category", fontsize=12)
@@ -505,7 +593,7 @@ with tab1:
                             plt.xticks(rotation=45, ha="right", fontsize=10)
                             
                             # Add labels on bars
-                            for bar, category, rating in zip(bars, faculty_data["Rating Category"], faculty_data["Rating"]):
+                            for bar, category, rating in zip(bars, avg_ratings["Rating Category"], avg_ratings["Rating"]):
                                 ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(), f"{rating:.2f}", ha="center", va="bottom", fontsize=10)
                             
                             plt.tight_layout()
@@ -523,8 +611,8 @@ with tab1:
                                 mime="image/png"
                             )
                         else:  # Table visualization
-                            # Generate table visualization
-                            table_fig = generate_table_visualization(faculty_data)
+                            # Generate table visualization using avg_ratings
+                            table_fig = generate_table_visualization(avg_ratings)
                             if table_fig:
                                 st.pyplot(table_fig)
                                 
@@ -544,7 +632,7 @@ with tab1:
                         st.markdown("---")
                         
                         # Generate text report for rating categories
-                        faculty_report = generate_faculty_report(faculty_data)
+                        faculty_report = generate_faculty_report(avg_ratings)
 
                         # Create columns for layout
                         report_col1, report_col2 = st.columns([1, 2])
@@ -559,7 +647,7 @@ with tab1:
                             )
                             
                             # Add PDF report download button
-                            pdf_buffer = generate_pdf_report(faculty_data)
+                            pdf_buffer = generate_pdf_report(avg_ratings, course_name)
                             st.download_button(
                                 label="Download PDF Report",
                                 data=pdf_buffer,
@@ -738,7 +826,7 @@ with tab1:
                     )
                     
                     # Add PDF report download button
-                    pdf_buffer = generate_pdf_report(faculty_data)
+                    pdf_buffer = generate_pdf_report(faculty_data, "N/A")
                     st.download_button(
                         label="Download PDF Report",
                         data=pdf_buffer,
