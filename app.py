@@ -97,7 +97,15 @@ def generate_pdf_report(faculty_data, course_name):
     # Add headers
     elements.append(Paragraph("School of Computing and Information Technology", header_style))
     elements.append(Paragraph("Academic year 2024-2025", header_style))
-    elements.append(Paragraph(f"Course: {course_name}", header_style))
+    
+    # Get course code if available
+    clean_course_name = course_name.replace("Feedback on ", "").strip()
+    if clean_course_name in st.session_state.course_code_mapping:
+        course_code = st.session_state.course_code_mapping[clean_course_name]
+        elements.append(Paragraph(f"Course: {clean_course_name} ({course_code})", header_style))
+    else:
+        elements.append(Paragraph(f"Course: {clean_course_name}", header_style))
+    
     elements.append(Paragraph(f"Name of the Faculty: {faculty_name}", faculty_style))
     elements.append(Spacer(1, 20))
     
@@ -132,7 +140,9 @@ def generate_pdf_report(faculty_data, course_name):
     style = TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),  
+        ('ALIGN', (0, 1), (0, -1), 'LEFT'),    
+        ('ALIGN', (1, 1), (1, -1), 'CENTER'),  
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('FONTSIZE', (0, 0), (-1, 0), 12),
         ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
@@ -142,12 +152,12 @@ def generate_pdf_report(faculty_data, course_name):
         ('FONTSIZE', (0, 1), (-1, -1), 10),
         ('GRID', (0, 0), (-1, -1), 1, colors.black),
         ('BOX', (0, 0), (-1, -1), 2, colors.black),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),  # Vertical middle alignment
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),  
         ('LEFTPADDING', (0, 0), (-1, -1), 6),
         ('RIGHTPADDING', (0, 0), (-1, -1), 6),
         ('TOPPADDING', (0, 0), (-1, -1), 6),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-        ('WORDWRAP', (0, 0), (-1, -1), True),  # Enable word wrapping
+        ('WORDWRAP', (0, 0), (-1, -1), True),  
     ])
     
     table.setStyle(style)
@@ -177,8 +187,16 @@ def generate_pdf_report(faculty_data, course_name):
     chart_img.hAlign = 'CENTER'
     chart_img._height = 5*inch  # Increase image height in the PDF
     elements.append(chart_img)
-    elements.append(Spacer(1, 20))
     plt.close(fig)  # Close the figure to free memory
+    
+    # Force the footer to appear at the bottom of the page
+    # First, calculate remaining space and add a spacer to push the footer down
+    # A typical US Letter page is 11 inches high (minus margins)
+    page_height = letter[1] - doc.topMargin - doc.bottomMargin
+    
+    # We already used about 7.5-8 inches (header + table + chart)
+    # Add a spacer that will push the footer to the bottom
+    elements.append(Spacer(1, 1.5*inch))  # Add extra space to push footer down
     
     # Add footer signatures
     footer_data = [["Academic Vertical Head", "Faculty", "Director/HOD"]]
@@ -306,11 +324,47 @@ if 'course_feedback_df' not in st.session_state:
     st.session_state.course_feedback_df = None
 if 'avg_ratings' not in st.session_state:
     st.session_state.avg_ratings = None
+if 'course_code_mapping' not in st.session_state:
+    st.session_state.course_code_mapping = {}
 
 # Create tabs
 tab1, tab2 = st.tabs(["Process & Visualize Data", "About"])
 
 with tab1:
+    # Course code mapping upload
+    with st.expander("Upload Course Code Mapping (Optional)"):
+        st.info("Upload an Excel file with columns for course names and their corresponding course codes.")
+        course_mapping_file = st.file_uploader("Course Code Mapping File (Excel)", type=["xlsx", "csv"], key="course_mapping")
+        
+        if course_mapping_file is not None:
+            try:
+                if course_mapping_file.name.endswith(".csv"):
+                    mapping_df = pd.read_csv(course_mapping_file)
+                else:
+                    mapping_df = pd.read_excel(course_mapping_file)
+                
+                # Check if dataframe has required columns
+                required_cols = ["course_name", "course_code"]
+                if not all(col.lower() in [c.lower() for c in mapping_df.columns] for col in required_cols):
+                    st.warning("The mapping file should have columns for 'course_name' and 'course_code'.")
+                else:
+                    # Find the actual column names (case insensitive)
+                    course_name_col = next(col for col in mapping_df.columns if col.lower() == "course_name")
+                    course_code_col = next(col for col in mapping_df.columns if col.lower() == "course_code")
+                    
+                    # Create mapping dictionary
+                    mapping_dict = dict(zip(mapping_df[course_name_col], mapping_df[course_code_col]))
+                    st.session_state.course_code_mapping = mapping_dict
+                    
+                    st.success(f"✅ Course mapping loaded successfully! {len(mapping_dict)} courses mapped.")
+                    
+                    # Show mapping preview
+                    st.write("Mapping Preview:")
+                    preview_df = pd.DataFrame(list(mapping_dict.items()), columns=["Course Name", "Course Code"])
+                    st.dataframe(preview_df.head(5))
+            except Exception as e:
+                st.error(f"⚠️ Error loading course mapping file: {e}")
+
     # Select processing mode
     process_mode = st.radio(
         "Select Mode:",
