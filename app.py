@@ -85,28 +85,34 @@ def generate_pdf_report(faculty_data, course_name):
         spaceAfter=10
     )
     
-    faculty_style = ParagraphStyle(
-        'FacultyName',
+    # Left-aligned style for course code
+    left_style = ParagraphStyle(
+        'LeftAligned',
         parent=styles['Normal'],
         fontSize=12,
         alignment=0,  # Left alignment
-        spaceBefore=10,
-        spaceAfter=20
+        spaceBefore=5,
+        spaceAfter=10
     )
     
-    # Add headers
+    # Add centered headers
     elements.append(Paragraph("School of Computing and Information Technology", header_style))
-    elements.append(Paragraph("Academic year 2024-2025", header_style))
     
-    # Get course code if available
+    # Use academic year from session state
+    academic_year = f"Academic year {st.session_state.start_year}-{st.session_state.end_year}"
+    elements.append(Paragraph(academic_year, header_style))
+    
+    elements.append(Paragraph(f"Name of the Faculty: {faculty_name}", header_style))
+    
+    # Clean course name
     clean_course_name = course_name.replace("Feedback on ", "").strip()
+    elements.append(Paragraph(f"Course: {clean_course_name}", header_style))
+    
+    # Add course code on left side if available
     if clean_course_name in st.session_state.course_code_mapping:
         course_code = st.session_state.course_code_mapping[clean_course_name]
-        elements.append(Paragraph(f"Course: {clean_course_name} ({course_code})", header_style))
-    else:
-        elements.append(Paragraph(f"Course: {clean_course_name}", header_style))
+        elements.append(Paragraph(f"Course Code: {course_code}", left_style))
     
-    elements.append(Paragraph(f"Name of the Faculty: {faculty_name}", faculty_style))
     elements.append(Spacer(1, 20))
     
     # Calculate overall average
@@ -326,6 +332,24 @@ if 'avg_ratings' not in st.session_state:
     st.session_state.avg_ratings = None
 if 'course_code_mapping' not in st.session_state:
     st.session_state.course_code_mapping = {}
+    
+# Initialize academic year with current year
+current_year = datetime.now().year
+if 'start_year' not in st.session_state:
+    st.session_state.start_year = current_year
+if 'end_year' not in st.session_state:
+    st.session_state.end_year = current_year + 1
+
+# Academic year input
+st.subheader("Set Academic Year")
+col1, col2 = st.columns(2)
+with col1:
+    start_year = st.number_input("Starting Year", min_value=2000, max_value=2100, value=st.session_state.start_year)
+    st.session_state.start_year = start_year
+    
+with col2:
+    end_year = st.number_input("Ending Year", min_value=2000, max_value=2100, value=st.session_state.end_year)
+    st.session_state.end_year = end_year
 
 # Create tabs
 tab1, tab2 = st.tabs(["Process & Visualize Data", "About"])
