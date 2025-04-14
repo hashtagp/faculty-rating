@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import io
 import base64
+import re
 from datetime import datetime
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, A4
@@ -24,11 +25,38 @@ def fig_to_image(fig):
     buf.seek(0)
     return Image(buf, width=7*inch, height=4*inch)
 
+# Function to extract semester and program from filename
+def extract_info_from_filename(filename):
+    """Extract semester and program information from feedback filename"""
+    info = {
+        'semester': None,
+        'program': None
+    }
+    
+    # Look for pattern like 'Sem-3' in the filename
+    sem_match = re.search(r'Sem-(\d+)', filename)
+    if sem_match:
+        info['semester'] = sem_match.group(1)
+    
+    # Look for program code like 'BT-AIML' in the filename
+    prog_match = re.search(r'BT-([A-Z]+)', filename)
+    if prog_match:
+        info['program'] = prog_match.group(1)
+    
+    return info
+
 # Function to generate faculty report
 def generate_faculty_report(faculty_data):
     """Generate a text report with rating categories and values"""
     faculty_name = faculty_data["Faculty Name"].iloc[0]
-    report = f"Faculty Rating Report for: {faculty_name}\n"
+    section = faculty_data["Section"].iloc[0] if "Section" in faculty_data.columns else ""
+    
+    # Include section in the header if available
+    header = f"Faculty Rating Report for: {faculty_name}"
+    if section:
+        header = f"Faculty Rating Report for: Section {section} - {faculty_name}"
+    
+    report = header + "\n"
     report += f"Generated on: {datetime.now().strftime('%Y-%m-%d')}\n"
     report += "=" * 50 + "\n\n"
     
@@ -52,6 +80,7 @@ def generate_faculty_report(faculty_data):
 def generate_pdf_report(faculty_data, course_name):
     """Generate a PDF report with ratings in table format"""
     faculty_name = faculty_data["Faculty Name"].iloc[0]
+    section = faculty_data["Section"].iloc[0] if "Section" in faculty_data.columns else ""
     
     # Create buffer for PDF with reduced margins
     pdf_buffer = io.BytesIO()
@@ -76,42 +105,89 @@ def generate_pdf_report(faculty_data, course_name):
         # If logo file not found, continue without it
         pass
     
-    # Create custom styles
-    header_style = ParagraphStyle(
-        'CustomHeader',
+    # Create custom styles for different alignments with reduced line spacing
+    center_style = ParagraphStyle(
+        'CenterHeader',
         parent=styles['Heading1'],
         fontSize=14,
         alignment=1,  # Center alignment
-        spaceAfter=10
+        spaceAfter=5
     )
     
-    # Left-aligned style for course code
     left_style = ParagraphStyle(
         'LeftAligned',
         parent=styles['Normal'],
         fontSize=12,
         alignment=0,  # Left alignment
-        spaceBefore=5,
-        spaceAfter=10
+        spaceBefore=2,  # Reduced from 5
+        spaceAfter=2,   # Reduced from 5
+        leading=14      # Control line height
     )
     
-    # Add centered headers
-    elements.append(Paragraph("School of Computing and Information Technology", header_style))
+    right_style = ParagraphStyle(
+        'RightAligned',
+        parent=styles['Normal'],
+        fontSize=12,
+        alignment=2,  # Right alignment
+        spaceBefore=2,  # Reduced from 5
+        spaceAfter=2,   # Reduced from 5
+        leading=14      # Control line height
+    )
     
-    # Use academic year from session state
-    academic_year = f"Academic year {st.session_state.start_year}-{st.session_state.end_year}"
-    elements.append(Paragraph(academic_year, header_style))
-    
-    elements.append(Paragraph(f"Name of the Faculty: {faculty_name}", header_style))
-    
-    # Clean course name
+    # Clean course name for display
     clean_course_name = course_name.replace("Feedback on ", "").strip()
-    elements.append(Paragraph(f"Course: {clean_course_name}", header_style))
     
-    # Add course code on left side if available
-    if clean_course_name in st.session_state.course_code_mapping:
-        course_code = st.session_state.course_code_mapping[clean_course_name]
-        elements.append(Paragraph(f"Course Code: {course_code}", left_style))
+    # CENTER ALIGNED HEADERS
+    # Add centered headers
+    elements.append(Paragraph("School of Computing and Information Technology", center_style))
+    elements.append(Paragraph(f"Academic Year {st.session_state.start_year}-{st.session_state.end_year}", center_style))
+    elements.append(Paragraph(f"Feedback on {clean_course_name}", center_style))
+    
+    # Add program name if available
+    if st.session_state.program:
+        elements.append(Paragraph(f"Program: {st.session_state.program}", center_style))
+    
+    elements.append(Spacer(1, 10))
+    
+    # Create a table for the 3-column layout with tighter spacing
+    data = []
+    
+    # Row 1: Faculty name | Empty | Semester
+    row1 = [
+        Paragraph(f"Name of the Faculty: {faculty_name}", left_style),
+        "",
+        Paragraph(f"Semester: {st.session_state.semester}" if st.session_state.semester else "", right_style)
+    ]
+    data.append(row1)
+    
+    # Row 2: Course name | Empty | Section
+    row2 = [
+        Paragraph(f"Course name: {clean_course_name}", left_style),
+        "",
+        Paragraph(f"Section: {section}" if section else "", right_style)
+    ]
+    data.append(row2)
+    
+    # Row 3: Course code | Empty | Empty
+    course_code = st.session_state.course_code_mapping.get(clean_course_name, "")
+    if course_code:
+        row3 = [
+            Paragraph(f"Course Code: {course_code}", left_style),
+            "",
+            ""
+        ]
+        data.append(row3)
+    
+    # Create the table with further adjusted column widths - minimize center gap
+    header_table = Table(data, colWidths=[4.0*inch, 0.1*inch, 2.4*inch], rowHeights=[18]*len(data))
+    header_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),  # Changed from TOP to MIDDLE
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 1),     # Reduced from 0
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 1),  # Reduced from 0
+    ]))
+    elements.append(header_table)
     
     elements.append(Spacer(1, 20))
     
@@ -204,8 +280,8 @@ def generate_pdf_report(faculty_data, course_name):
     # Add a spacer that will push the footer to the bottom
     elements.append(Spacer(1, 1.5*inch))  # Add extra space to push footer down
     
-    # Add footer signatures
-    footer_data = [["Academic Vertical Head", "Faculty", "Director/HOD"]]
+    # Add footer signatures with updated labels
+    footer_data = [["IQAC", "DIRECTOR", "HOD"]]
     footer_table = Table(footer_data, colWidths=[2.0*inch, 2.0*inch, 2.0*inch])
     footer_style = TableStyle([
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
@@ -332,6 +408,10 @@ if 'avg_ratings' not in st.session_state:
     st.session_state.avg_ratings = None
 if 'course_code_mapping' not in st.session_state:
     st.session_state.course_code_mapping = {}
+if 'semester' not in st.session_state:
+    st.session_state.semester = None
+if 'program' not in st.session_state:
+    st.session_state.program = None
     
 # Initialize academic year with current year
 current_year = datetime.now().year
@@ -402,6 +482,17 @@ with tab1:
         
         if uploaded_file is not None:
             try:
+                # Extract semester and program from filename if possible
+                file_info = extract_info_from_filename(uploaded_file.name)
+                
+                if file_info['semester']:
+                    st.session_state.semester = file_info['semester']
+                    st.success(f"✅ Detected Semester {file_info['semester']} from filename")
+                
+                if file_info['program']:
+                    st.session_state.program = file_info['program']
+                    st.success(f"✅ Detected Program {file_info['program']} from filename")
+                
                 # Read file
                 if uploaded_file.name.endswith(".csv"):
                     raw_df = pd.read_csv(uploaded_file)
@@ -633,110 +724,168 @@ with tab1:
                     # Visualization section
                     st.subheader("Visualize Faculty Ratings")
                     
-                    # Select Faculty
-                    faculties = st.session_state.avg_ratings["Faculty Name"].unique()
-                    
-                    if len(faculties) == 0:
-                        st.error("❌ No faculty names detected! Please check your data.")
+                    # Group by Section and Faculty
+                    if "Section" in st.session_state.faculty_ratings_df.columns:
+                        # Create combined labels for faculty selection
+                        section_faculty_groups = st.session_state.faculty_ratings_df.groupby(["Section", "Faculty Name"]).size().reset_index()
+                        section_faculty_labels = [f"Section {row['Section']} - {row['Faculty Name']}" if pd.notna(row['Section']) and row['Section'] else row['Faculty Name'] for _, row in section_faculty_groups.iterrows()]
+                        
+                        # Select Section-Faculty combination
+                        selected_combo = st.selectbox("🎓 Select a Section-Faculty Combination", section_faculty_labels)
+                        
+                        # Parse the selection back to section and faculty
+                        if " - " in selected_combo and selected_combo.startswith("Section "):
+                            section, faculty = selected_combo.replace("Section ", "", 1).split(" - ", 1)
+                        else:
+                            section = ""
+                            faculty = selected_combo
+                        
+                        # Filter Data for Selected Faculty and Section
+                        if section:
+                            faculty_data = st.session_state.faculty_ratings_df[
+                                (st.session_state.faculty_ratings_df["Faculty Name"] == faculty) &
+                                (st.session_state.faculty_ratings_df["Section"] == section)
+                            ].copy()
+                        else:
+                            faculty_data = st.session_state.faculty_ratings_df[
+                                st.session_state.faculty_ratings_df["Faculty Name"] == faculty
+                            ].copy()
                     else:
-                        selected_faculty = st.selectbox("🎓 Select a Faculty", faculties)
+                        # Fall back to original faculty selection if Section is not available
+                        faculties = st.session_state.avg_ratings["Faculty Name"].unique()
                         
-                        # Filter Data for Selected Faculty
-                        faculty_data = st.session_state.faculty_ratings_df[
-                            st.session_state.faculty_ratings_df["Faculty Name"] == selected_faculty
-                        ].copy()
-                        
-                        # Get unique course name for this faculty
-                        course_name = faculty_data["Course"].iloc[0].replace("Feedback on ", "") if len(faculty_data) > 0 else "N/A"
-                        
-                        # Update averages computation
+                        if len(faculties) == 0:
+                            st.error("❌ No faculty names detected! Please check your data.")
+                        else:
+                            selected_faculty = st.selectbox("🎓 Select a Faculty", faculties)
+                            
+                            # Filter Data for Selected Faculty
+                            faculty_data = st.session_state.faculty_ratings_df[
+                                st.session_state.faculty_ratings_df["Faculty Name"] == selected_faculty
+                            ].copy()
+                            section = ""
+                    
+                    # Get unique course name for this faculty
+                    course_name = faculty_data["Course"].iloc[0].replace("Feedback on ", "") if len(faculty_data) > 0 else "N/A"
+                    
+                    # Update averages computation to include Section if available
+                    if "Section" in faculty_data.columns:
+                        avg_ratings = faculty_data.groupby(["Section", "Faculty Name", "Rating Category"], as_index=False).agg({"Rating": "mean"})
+                    else:
                         avg_ratings = faculty_data.groupby(["Faculty Name", "Rating Category"], as_index=False).agg({"Rating": "mean"})
-                        
-                        # Select visualization type
-                        viz_type = st.radio(
-                            "Choose Visualization Type:",
-                            ["Bar Chart", "Table"],
-                            horizontal=True
-                        )
-                        
-                        if viz_type == "Bar Chart":
-                            # Plot Ratings using avg_ratings
-                            fig, ax = plt.subplots(figsize=(12, 8))  # Increased height from 6 to 8
-                            bars = ax.bar(avg_ratings["Rating Category"], avg_ratings["Rating"], color="skyblue", width=0.6)  # Added width parameter
+                    
+                    # Select visualization type
+                    viz_type = st.radio(
+                        "Choose Visualization Type:",
+                        ["Bar Chart", "Table"],
+                        horizontal=True
+                    )
+                    
+                    # For visualizations, update the titles to include section if available
+                    if viz_type == "Bar Chart":
+                        # Plot Ratings using avg_ratings
+                        fig, ax = plt.subplots(figsize=(12, 8))  # Increased height from 6 to 8
+                        bars = ax.bar(avg_ratings["Rating Category"], avg_ratings["Rating"], color="skyblue", width=0.6)
 
-                            ax.set_title(f"📈 Average Ratings for {selected_faculty}", fontsize=14)
-                            ax.set_xlabel("Rating Category", fontsize=12)
-                            ax.set_ylabel("Average Rating (1-5)", fontsize=12)
-                            ax.set_ylim(0, 5.5)  # Keep the same y-limit
-                            plt.xticks(rotation=45, ha="right", fontsize=10)
+                        # Include section in title if available
+                        if "Section" in avg_ratings.columns and avg_ratings["Section"].iloc[0]:
+                            title = f"📈 Average Ratings for Section {avg_ratings['Section'].iloc[0]} - {avg_ratings['Faculty Name'].iloc[0]}"
+                        else:
+                            title = f"📈 Average Ratings for {avg_ratings['Faculty Name'].iloc[0]}"
                             
-                            # Add labels on bars
-                            for bar, category, rating in zip(bars, avg_ratings["Rating Category"], avg_ratings["Rating"]):
-                                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(), f"{rating:.2f}", ha="center", va="bottom", fontsize=10)
+                        ax.set_title(title, fontsize=14)
+                        ax.set_xlabel("Rating Category", fontsize=12)
+                        ax.set_ylabel("Average Rating (1-5)", fontsize=12)
+                        ax.set_ylim(0, 5.5)  # Keep the same y-limit
+                        plt.xticks(rotation=45, ha="right", fontsize=10)
+                        
+                        # Add labels on bars
+                        for bar, category, rating in zip(bars, avg_ratings["Rating Category"], avg_ratings["Rating"]):
+                            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(), f"{rating:.2f}", ha="center", va="bottom", fontsize=10)
+                        
+                        plt.tight_layout()
+                        st.pyplot(fig)
+                        
+                        # Save figure option
+                        save_fig_buffer = io.BytesIO()
+                        fig.savefig(save_fig_buffer, format='png', dpi=300, bbox_inches='tight')
+                        save_fig_buffer.seek(0)
+                        
+                        # Create filename based on section and faculty
+                        if section:
+                            filename = f"Section_{section}_{faculty}_ratings_chart.png"
+                        else:
+                            filename = f"{faculty}_ratings_chart.png"
+                        
+                        st.download_button(
+                            label="Download Chart",
+                            data=save_fig_buffer,
+                            file_name=filename,
+                            mime="image/png"
+                        )
+                    else:  # Table visualization
+                        # Generate table visualization using avg_ratings
+                        table_fig = generate_table_visualization(avg_ratings)
+                        if table_fig:
+                            st.pyplot(table_fig)
                             
-                            plt.tight_layout()
-                            st.pyplot(fig)
+                            # Save table figure option
+                            table_buffer = io.BytesIO()
+                            table_fig.savefig(table_buffer, format='png', dpi=300, bbox_inches='tight')
+                            table_buffer.seek(0)
                             
-                            # Save figure option
-                            save_fig_buffer = io.BytesIO()
-                            fig.savefig(save_fig_buffer, format='png', dpi=300, bbox_inches='tight')
-                            save_fig_buffer.seek(0)
+                            # Create filename based on section and faculty
+                            if section:
+                                filename = f"Section_{section}_{faculty}_ratings_table.png"
+                            else:
+                                filename = f"{faculty}_ratings_table.png"
                             
                             st.download_button(
-                                label="Download Chart",
-                                data=save_fig_buffer,
-                                file_name=f"{selected_faculty}_ratings_chart.png",
+                                label="Download Table Image",
+                                data=table_buffer,
+                                file_name=filename,
                                 mime="image/png"
                             )
-                        else:  # Table visualization
-                            # Generate table visualization using avg_ratings
-                            table_fig = generate_table_visualization(avg_ratings)
-                            if table_fig:
-                                st.pyplot(table_fig)
-                                
-                                # Save table figure option
-                                table_buffer = io.BytesIO()
-                                table_fig.savefig(table_buffer, format='png', dpi=300, bbox_inches='tight')
-                                table_buffer.seek(0)
-                                
-                                st.download_button(
-                                    label="Download Table Image",
-                                    data=table_buffer,
-                                    file_name=f"{selected_faculty}_ratings_table.png",
-                                    mime="image/png"
-                                )
-                        
-                        # Add horizontal line for visual separation
-                        st.markdown("---")
-                        
-                        # Generate text report for rating categories
-                        faculty_report = generate_faculty_report(avg_ratings)
+                    
+                    # Add horizontal line for visual separation
+                    st.markdown("---")
+                    
+                    # Generate text report for rating categories
+                    faculty_report = generate_faculty_report(avg_ratings)
 
-                        # Create columns for layout
-                        report_col1, report_col2 = st.columns([1, 2])
+                    # Create columns for layout
+                    report_col1, report_col2 = st.columns([1, 2])
 
-                        with report_col1:
-                            # Add text report download button
-                            st.download_button(
-                                label="Download Text Report",
-                                data=faculty_report,
-                                file_name=f"{selected_faculty}_ratings_report.txt",
-                                mime="text/plain"
-                            )
+                    with report_col1:
+                        # Create report filename based on section and faculty
+                        if section:
+                            text_filename = f"Section_{section}_{faculty}_ratings_report.txt"
+                            pdf_filename = f"Section_{section}_{faculty}_ratings_report.pdf"
+                        else:
+                            text_filename = f"{faculty}_ratings_report.txt"
+                            pdf_filename = f"{faculty}_ratings_report.pdf"
                             
-                            # Add PDF report download button
-                            pdf_buffer = generate_pdf_report(avg_ratings, course_name)
-                            st.download_button(
-                                label="Download PDF Report",
-                                data=pdf_buffer,
-                                file_name=f"{selected_faculty}_ratings_report.pdf",
-                                mime="application/pdf"
-                            )
+                        # Add text report download button
+                        st.download_button(
+                            label="Download Text Report",
+                            data=faculty_report,
+                            file_name=text_filename,
+                            mime="text/plain"
+                        )
+                        
+                        # Add PDF report download button
+                        pdf_buffer = generate_pdf_report(avg_ratings, course_name)
+                        st.download_button(
+                            label="Download PDF Report",
+                            data=pdf_buffer,
+                            file_name=pdf_filename,
+                            mime="application/pdf"
+                        )
 
-                        with report_col2:
-                            # Preview the report
-                            st.text("Report Preview:")
-                            st.text_area("", faculty_report, height=250)
+                    with report_col2:
+                        # Preview the report
+                        st.text("Report Preview:")
+                        st.text_area("", faculty_report, height=250)
                 
             except Exception as e:
                 st.error(f"⚠️ Error processing the file: {e}")
