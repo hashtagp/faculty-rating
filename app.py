@@ -385,6 +385,107 @@ def verify_data_processing(faculty_ratings_df, comments_df, course_feedback_df):
             course_fb = course_feedback_df[course_feedback_df['Course'] == course]
             print(f"- {course}: {len(course_fb)} feedback entries")
 
+# Function to extract section information from faculty name
+def extract_section_from_faculty_name(faculty_name):
+    """
+    Extract section information from faculty name field
+    Examples:
+    - "Section A - Dr. Smith" returns "A", "Dr. Smith"
+    - "Dr. Smith - Section B" returns "B", "Dr. Smith"
+    """
+    faculty_name = str(faculty_name).strip()
+    
+    # Try to match "Section X - Faculty Name" pattern
+    pattern1 = re.search(r'(?i)section\s+([A-Z0-9]+)\s*[-:]?\s*(.*)', faculty_name)
+    if pattern1:
+        section = pattern1.group(1).strip()
+        name = pattern1.group(2).strip()
+        return section, name
+    
+    # Try to match "Faculty Name - Section X" pattern - FIX: moved flag to beginning or use re.IGNORECASE
+    pattern2 = re.search(r'(?i)(.*?)\s*[-:]\s*section\s+([A-Z0-9]+)', faculty_name)
+    if pattern2:
+        name = pattern2.group(1).strip()
+        section = pattern2.group(2).strip()
+        return section, name
+        
+    # If no section info found, return None for section
+    return None, faculty_name
+
+# Add this function before the data processing section, for example after the extract_section_from_faculty_name function
+
+def get_columns_for_faculty(all_columns, course_columns, faculty_col_idx):
+    """
+    Get columns that are likely related to the faculty at faculty_col_idx.
+    Uses proximity in the column layout to determine relevant columns.
+    
+    Parameters:
+    - all_columns: List of all column names in the dataframe
+    - course_columns: List of column indices for the current course
+    - faculty_col_idx: Index of the specific faculty column to process
+    
+    Returns:
+    - List of column indices relevant to this faculty
+    """
+    # Start with all columns in this course block
+    relevant_cols = course_columns.copy()
+    
+    # If there's only one faculty column, return all columns
+    faculty_cols = [i for i in course_columns if 'Name of the Faculty' in all_columns[i]]
+    if len(faculty_cols) <= 1:
+        return course_columns
+    
+    # Sort faculty columns
+    faculty_cols.sort()
+    
+    # Find boundaries of this faculty's section
+    # Find position of current faculty column in the sorted list
+    current_idx = faculty_cols.index(faculty_col_idx)
+    
+    # Set start boundary (beginning of course or after previous faculty)
+    start_boundary = 0 if current_idx == 0 else faculty_cols[current_idx - 1]
+    
+    # Set end boundary (end of course or before next faculty)
+    end_boundary = float('inf') if current_idx == len(faculty_cols) - 1 else faculty_cols[current_idx + 1]
+    
+    # Filter to columns between boundaries
+    relevant_cols = [col for col in course_columns if start_boundary <= col < end_boundary]
+    
+    return relevant_cols
+
+# Add this function after the other helper functions (like extract_section_from_faculty_name)
+# and before the Streamlit app initialization
+
+def identify_course_columns(columns):
+    """
+    Identify which columns belong to which course/faculty block
+    
+    Parameters:
+    - columns: List of column names in the dataframe
+    
+    Returns:
+    - List of tuples with (course_name, [column_indices])
+    """
+    course_blocks = []
+    current_block = []
+    current_course = None
+
+    for i, col in enumerate(columns):
+        if isinstance(col, str) and col.startswith('Feedback on '):
+            if current_block:
+                course_blocks.append((current_course, current_block))
+                current_block = []
+            current_course = col
+            current_block = []
+        elif current_course is not None:
+            current_block.append(i)
+
+    # Add the last block
+    if current_block:
+        course_blocks.append((current_course, current_block))
+
+    return course_blocks
+
 # Set page config
 st.set_page_config(page_title="Faculty Ratings Dashboard", layout="wide")
 
@@ -505,9 +606,53 @@ with tab1:
                 with st.expander("Preview Raw Data"):
                     st.dataframe(raw_df.head())
                 
-                # Process button
+                # Process button - add debug output for faculty columns
                 if st.button("Process Raw Data"):
                     with st.spinner("Processing data... This may take a moment."):
+                        # Add debugging information about faculty columns
+                        st.write("### Faculty Columns Detection")
+                        faculty_cols_debug = {}
+                        
+                        # Identify course blocks
+                        course_blocks = identify_course_columns(raw_df.columns)
+                        
+                        # Process each course block to identify faculty columns
+                        for course_name, column_indices in course_blocks:
+                            # Use broader pattern matching for faculty columns
+                            faculty_cols_in_course = [i for i in column_indices if 
+                                                    any(pattern in raw_df.columns[i].lower() for pattern in 
+                                                    ["name of the faculty", "faculty name", "name of faculty"])]
+                            
+                            if faculty_cols_in_course:
+                                faculty_cols_debug[course_name] = [raw_df.columns[i] for i in faculty_cols_in_course]
+                        
+                        # Display detected faculty columns to the user
+                        for course, faculty_cols in faculty_cols_debug.items():
+                            st.write(f"**Course: {course}**")
+                            for i, col in enumerate(faculty_cols, 1):
+                                st.write(f"  Faculty Column {i}: {col}")
+                        
+                        # Show a sample row with faculty data
+                        if len(raw_df) > 0:
+                            st.write("### Sample Row with Faculty Names")
+                            sample_row = raw_df.iloc[0]
+                            
+                            # Create a sample dataframe of just faculty columns
+                            sample_faculty_data = {}
+                            for course_name, column_indices in course_blocks:
+                                faculty_cols = [i for i in column_indices if 
+                                            any(pattern in raw_df.columns[i].lower() for pattern in 
+                                                ["name of the faculty", "faculty name", "name of faculty"])]
+                                
+                                for i in faculty_cols:
+                                    col_name = raw_df.columns[i]
+                                    sample_faculty_data[f"{course_name}: {col_name}"] = [sample_row[col_name]]
+                            
+                            if sample_faculty_data:
+                                sample_df = pd.DataFrame(sample_faculty_data)
+                                st.dataframe(sample_df)
+                        
+                        # Also update the actual processing code to use broader pattern matching
                         # Initialize empty lists to store the transformed data
                         student_names = []
                         srns = []
@@ -519,93 +664,84 @@ with tab1:
                         course_feedbacks = []
                         comments = []
 
-                        # Helper function to identify which columns belong to which course/faculty
-                        def identify_course_columns(columns):
-                            course_blocks = []
-                            current_block = []
-                            current_course = None
-
-                            for i, col in enumerate(columns):
-                                if isinstance(col, str) and col.startswith('Feedback on '):
-                                    if current_block:
-                                        course_blocks.append((current_course, current_block))
-                                        current_block = []
-                                    current_course = col
-                                    current_block = []
-                                elif current_course is not None:
-                                    current_block.append(i)
-
-                            # Add the last block
-                            if current_block:
-                                course_blocks.append((current_course, current_block))
-
-                            return course_blocks
-
-                        # Get the course blocks
-                        course_blocks = identify_course_columns(raw_df.columns)
-
                         # Process each row
                         for index, row in raw_df.iterrows():
                             student_name = row.get('Name of the Student', None)
                             srn = row.get('SRN', None)
-                            section = row.get('Section', None)
-
+                            section = row.get('Section', None)  # This stays as a backup
+                            
                             if pd.isna(student_name) or pd.isna(srn):
                                 continue
-
+                                
                             # Process each course block
                             for course_name, column_indices in course_blocks:
-                                # Find faculty name column
-                                faculty_col = [i for i in column_indices if 'Name of the Faculty' in raw_df.columns[i]]
-                                if not faculty_col:
-                                    continue
+                                # Use broader pattern matching for faculty columns
+                                faculty_cols = [i for i in column_indices if 
+                                            any(pattern in raw_df.columns[i].lower() for pattern in 
+                                                ["name of the faculty", "faculty name", "name of faculty"])]
+                                
+                                # Process each faculty in this course block
+                                for faculty_col_idx in faculty_cols:
+                                    # Extract faculty name
+                                    raw_faculty_name = str(row[raw_df.columns[faculty_col_idx]])
+                                    if pd.isna(raw_faculty_name) or raw_faculty_name.strip() == '':
+                                        continue
+                                        
+                                    # Extract section and clean faculty name
+                                    section_from_faculty, faculty_name = extract_section_from_faculty_name(raw_faculty_name)
+                                    
+                                    # Use section from faculty name if available, otherwise use the section column
+                                    effective_section = section_from_faculty if section_from_faculty else section
+                                    
+                                    # Find question columns related to this faculty
+                                    # Use column proximity to connect questions to faculty
+                                    relevant_cols = get_columns_for_faculty(raw_df.columns, column_indices, faculty_col_idx)
+                                    
+                                    # Extract rating questions for this faculty
+                                    question_cols = [i for i in relevant_cols if 'Please give a rating' in raw_df.columns[i]]
+                                    
+                                    # Process each question related to this faculty
+                                    for q_col in question_cols:
+                                        # ...existing code to process ratings...
+                                        question = raw_df.columns[q_col]
+                                        rating = row[raw_df.columns[q_col]]
+                                        
+                                        if not pd.isna(rating):
+                                            student_names.append(student_name)
+                                            srns.append(srn)
+                                            sections.append(effective_section)  # Use the extracted section
+                                            faculty_names.append(faculty_name)  # Use the clean faculty name
+                                            courses.append(course_name)
+                                            rating_types.append(question)
+                                            ratings.append(rating)
+                                            
+                                    # Get comments if available
+                                    comment_col = [i for i in relevant_cols if raw_df.columns[i] == 'Comments']
+                                    if comment_col:
+                                        comment = row[raw_df.columns[comment_col[0]]]
+                                        if not pd.isna(comment):
+                                            comments.append({
+                                                'Student': student_name,
+                                                'SRN': srn,
+                                                'Faculty': faculty_name,
+                                                'Course': course_name,
+                                                'Comment': comment
+                                            })
 
-                                faculty_name = row[raw_df.columns[faculty_col[0]]]
+                                    # Get course feedback questions
+                                    course_feedback_cols = [i for i in relevant_cols if 'The course' in raw_df.columns[i]]
+                                    for cf_col in course_feedback_cols:
+                                        question = raw_df.columns[cf_col]
+                                        rating = row[raw_df.columns[cf_col]]
 
-                                # Find question columns
-                                question_cols = [i for i in column_indices if 'Please give a rating' in raw_df.columns[i]]
-
-                                # Process each question
-                                for q_col in question_cols:
-                                    question = raw_df.columns[q_col]
-                                    rating = row[raw_df.columns[q_col]]
-
-                                    if not pd.isna(rating):
-                                        student_names.append(student_name)
-                                        srns.append(srn)
-                                        sections.append(section)
-                                        faculty_names.append(faculty_name)
-                                        courses.append(course_name)
-                                        rating_types.append(question)
-                                        ratings.append(rating)
-
-                                # Get comments if available
-                                comment_col = [i for i in column_indices if raw_df.columns[i] == 'Comments']
-                                if comment_col:
-                                    comment = row[raw_df.columns[comment_col[0]]]
-                                    if not pd.isna(comment):
-                                        comments.append({
-                                            'Student': student_name,
-                                            'SRN': srn,
-                                            'Faculty': faculty_name,
-                                            'Course': course_name,
-                                            'Comment': comment
-                                        })
-
-                                # Get course feedback questions
-                                course_feedback_cols = [i for i in column_indices if 'The course' in raw_df.columns[i]]
-                                for cf_col in course_feedback_cols:
-                                    question = raw_df.columns[cf_col]
-                                    rating = row[raw_df.columns[cf_col]]
-
-                                    if not pd.isna(rating):
-                                        course_feedbacks.append({
-                                            'Student': student_name,
-                                            'SRN': srn,
-                                            'Course': course_name,
-                                            'Question': question,
-                                            'Rating': rating
-                                        })
+                                        if not pd.isna(rating):
+                                            course_feedbacks.append({
+                                                'Student': student_name,
+                                                'SRN': srn,
+                                                'Course': course_name,
+                                                'Question': question,
+                                                'Rating': rating
+                                            })
 
                         # Create the main faculty ratings DataFrame
                         faculty_ratings_df = pd.DataFrame({
@@ -660,6 +796,10 @@ with tab1:
                 # Display processed data if available in session state
                 if st.session_state.faculty_ratings_df is not None:
                     st.subheader("Processed Data")
+                    
+                    # Debug: Check unique sections in the dataset
+                    unique_sections = st.session_state.faculty_ratings_df['Section'].unique()
+                    print(f"Debug - Unique sections in data: {unique_sections}")
                     
                     # Create tabs for different datasets
                     data_tabs = st.tabs(["Faculty Ratings", "Student Comments", "Course Feedback"])
@@ -724,11 +864,28 @@ with tab1:
                     # Visualization section
                     st.subheader("Visualize Faculty Ratings")
                     
-                    # Group by Section and Faculty
+                    # Group by Section and Faculty - improved logic
                     if "Section" in st.session_state.faculty_ratings_df.columns:
-                        # Create combined labels for faculty selection
+                        # Make sure section values are properly extracted
+                        st.session_state.faculty_ratings_df['Section'] = st.session_state.faculty_ratings_df['Section'].astype(str).fillna('')
+                        
+                        # Create combined labels for faculty selection with clearer section extraction
                         section_faculty_groups = st.session_state.faculty_ratings_df.groupby(["Section", "Faculty Name"]).size().reset_index()
-                        section_faculty_labels = [f"Section {row['Section']} - {row['Faculty Name']}" if pd.notna(row['Section']) and row['Section'] else row['Faculty Name'] for _, row in section_faculty_groups.iterrows()]
+                        
+                        # Debug: Show unique section-faculty combinations
+                        print("Debug - Section-Faculty combinations:")
+                        for _, row in section_faculty_groups.iterrows():
+                            print(f"  Section: '{row['Section']}' - Faculty: '{row['Faculty Name']}'")
+                            
+                        # Create labels for dropdown, ensuring section is clearly shown
+                        section_faculty_labels = []
+                        for _, row in section_faculty_groups.iterrows():
+                            section_val = row['Section']
+                            # Only add "Section" prefix if section value is not empty
+                            if pd.notna(section_val) and section_val.strip() != '':
+                                section_faculty_labels.append(f"Section {section_val} - {row['Faculty Name']}")
+                            else:
+                                section_faculty_labels.append(row['Faculty Name'])
                         
                         # Select Section-Faculty combination
                         selected_combo = st.selectbox("🎓 Select a Section-Faculty Combination", section_faculty_labels)
@@ -1101,3 +1258,5 @@ with tab2:
     
     Each dataset can be downloaded separately for further analysis.
     """)
+
+
