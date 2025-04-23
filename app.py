@@ -143,9 +143,10 @@ def generate_pdf_report(faculty_data, course_name):
     elements.append(Paragraph(f"Academic Year {st.session_state.start_year}-{st.session_state.end_year}", center_style))
     elements.append(Paragraph(f"Feedback on {clean_course_name}", center_style))
     
-    # Add program name if available
+    # Add program name if available - MODIFY THIS SECTION
     if st.session_state.program:
-        elements.append(Paragraph(f"Program: {st.session_state.program}", center_style))
+        full_program = get_full_program_name(st.session_state.program)
+        elements.append(Paragraph(f"{full_program}", center_style))
     
     elements.append(Spacer(1, 10))
     
@@ -281,7 +282,7 @@ def generate_pdf_report(faculty_data, course_name):
     elements.append(Spacer(1, 1.5*inch))  # Add extra space to push footer down
     
     # Add footer signatures with updated labels
-    footer_data = [["IQAC", "DIRECTOR", "HOD"]]
+    footer_data = [["IQAC", "HOD", "DIRECTOR"]]
     footer_table = Table(footer_data, colWidths=[2.0*inch, 2.0*inch, 2.0*inch])
     footer_style = TableStyle([
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
@@ -486,8 +487,31 @@ def identify_course_columns(columns):
 
     return course_blocks
 
+# Add this dictionary after other helper functions but before app initialization
+def get_full_program_name(program_code):
+    """
+    Convert program code to full program name
+    """
+    program_mapping = {
+        "AIML": "B.Tech in Computer Science and Engineering (Artificial Intelligence and Machine Learning)",
+        "CSE": "B.Tech in Computer Science and Engineering",
+        "CSIT": "B.Tech in Computer Science and Information Technology",
+        "CSSE": "B.Tech in Computer Science and Systems Engineering", 
+        "ISE": "B.Tech in Information Science and Engineering",
+        "DS": "B.Tech in Computer Science and Engineering (Data Science)",
+        "CS": "B.Tech in Computer Science and Engineering",
+        "ECE": "B.Tech in Electronics and Communication Engineering",
+        "EEE": "B.Tech in Electrical and Electronics Engineering",
+        "MECH": "B.Tech in Mechanical Engineering",
+        "CIVIL": "B.Tech in Civil Engineering"
+    }
+    return program_mapping.get(program_code, program_code)
+
 # Set page config
-st.set_page_config(page_title="Faculty Ratings Dashboard", layout="wide")
+st.set_page_config(
+    page_title="C&IT | REVA University", 
+    page_icon="logo.ico", 
+    layout="wide")
 
 # Streamlit App Title
 st.title("📊 Faculty Ratings Dashboard")
